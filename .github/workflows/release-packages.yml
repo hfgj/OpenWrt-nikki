@@ -8,6 +8,7 @@ on:
 
 jobs:
   release:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     name: ${{ matrix.arch }}-${{ matrix.branch }} release
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -91,6 +92,7 @@ jobs:
           path: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
 
   feed:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     needs: release
     name: feed
     runs-on: ubuntu-latest

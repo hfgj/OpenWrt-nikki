@@ -1,0 +1,8 @@
+{
+  "include": [
+    {
+      "branch": "openwrt-24.10",
+      "arch": "aarch64_cortex-a53"
+    }
+  ]
+}

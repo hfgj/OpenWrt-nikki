@@ -1,0 +1,20 @@
+name: HFGJ distribution checks
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [hfgj]
+  push:
+    branches: [hfgj]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install signature verifier
+        run: sudo apt-get update && sudo apt-get install -y usign
+      - run: |
+          python3 -m unittest discover -s hfgj/tests -v
+          sh -n feed.sh install.sh migrate.sh
+          bash -n hfgj/scripts/sync-upstream.sh

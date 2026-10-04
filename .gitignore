@@ -1,0 +1,12 @@
+/bin/
+/logs/
+/public/
+/hfgj/build/
+/mihomo-hfgj/core.mk
+/mihomo-hfgj/core.json
+__pycache__/
+*.pyc
+key-build
+key-build.pub
+private-key.pem
+public-key.pem

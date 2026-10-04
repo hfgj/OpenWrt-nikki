@@ -7,6 +7,7 @@ on:
 
 jobs:
   get_current_alpha_info:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     runs-on: ubuntu-latest
     outputs:
       pkg_source_version: ${{ steps.info.outputs.pkg_source_version }}
@@ -23,6 +24,7 @@ jobs:
         run: |
           echo "pkg_source_version=$(grep "PKG_SOURCE_VERSION:=" OpenWrt-nikki/mihomo-alpha/Makefile | cut -d '=' -f 2)" >> $GITHUB_OUTPUT
   get_latest_alpha_info:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     runs-on: ubuntu-latest
     outputs:
       commit_date: ${{ steps.info.outputs.commit_date }}
@@ -60,7 +62,7 @@ jobs:
     needs:
       - get_current_alpha_info
       - get_latest_alpha_info
-    if: ${{ needs.get_current_alpha_info.outputs.pkg_source_version != needs.get_latest_alpha_info.outputs.commit_sha }}
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki' && (needs.get_current_alpha_info.outputs.pkg_source_version != needs.get_latest_alpha_info.outputs.commit_sha)
     runs-on: ubuntu-latest
     steps:
       - id: checkout
@@ -88,6 +90,7 @@ jobs:
           body: |
             [Changelog](https://github.com/metacubex/mihomo/compare/${{ needs.get_current_alpha_info.outputs.pkg_source_version }}...${{  needs.get_latest_alpha_info.outputs.commit_sha }})
   get_current_meta_info:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     runs-on: ubuntu-latest
     outputs:
       pkg_source_version: ${{ steps.info.outputs.pkg_source_version }}
@@ -104,6 +107,7 @@ jobs:
         run: |
           echo "pkg_source_version=$(grep "PKG_SOURCE_VERSION:=" OpenWrt-nikki/mihomo-meta/Makefile | cut -d '=' -f 2)" >> $GITHUB_OUTPUT
   get_latest_meta_info:
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki'
     runs-on: ubuntu-latest
     outputs:
       latest_tag: ${{ steps.info.outputs.latest_tag }}
@@ -140,7 +144,7 @@ jobs:
     needs:
       - get_current_meta_info
       - get_latest_meta_info
-    if: ${{ needs.get_current_meta_info.outputs.pkg_source_version != needs.get_latest_meta_info.outputs.latest_tag }}
+    if: github.repository == 'nikkinikki-org/OpenWrt-nikki' && (needs.get_current_meta_info.outputs.pkg_source_version != needs.get_latest_meta_info.outputs.latest_tag)
     runs-on: ubuntu-latest
     steps:
       - id: checkout

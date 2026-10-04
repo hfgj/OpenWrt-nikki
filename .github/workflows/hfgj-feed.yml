@@ -1,0 +1,157 @@
+name: HFGJ core feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified signed feed to GitHub Pages
+        type: boolean
+        default: false
+      force_build:
+        description: Rebuild even when the current published feed is identical
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hfgj-signed-core-feed
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'hfgj/OpenWrt-nikki' && (github.event_name != 'schedule' || vars.HFGJ_AUTO_FEED == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      matrix: ${{ steps.core.outputs.matrix }}
+      changed: ${{ steps.core.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: hfgj
+          fetch-depth: 0
+      - name: Lock the packaging source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Local regression and shell checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y usign
+          python3 -m unittest discover -s hfgj/tests -v
+          sh -n feed.sh install.sh migrate.sh
+      - name: Select explicitly configured device targets
+        env:
+          TARGETS: ${{ vars.HFGJ_TARGETS }}
+        run: |
+          if [ -n "$TARGETS" ]; then printf '%s\n' "$TARGETS" > hfgj/targets.json; fi
+      - name: Resolve and verify published HFGJ Linux ARM64 core
+        id: core
+        env:
+          FEED_URL: ${{ vars.HFGJ_FEED_URL || 'https://hfgj.github.io/OpenWrt-nikki' }}
+        run: |
+          python3 hfgj/scripts/core_feed.py prepare --feed-url "$FEED_URL" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hfgj-locked-core
+          path: |
+            hfgj/build/
+            mihomo-hfgj/core.mk
+            mihomo-hfgj/core.json
+            hfgj/targets.json
+          include-hidden-files: true
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true' || inputs.force_build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: hfgj-locked-core
+          path: .
+      - name: Require configured signing keys
+        env:
+          KEY_BUILD: ${{ secrets.HFGJ_KEY_BUILD }}
+          KEY_BUILD_PUB: ${{ secrets.HFGJ_KEY_BUILD_PUB }}
+        run: |
+          test -n "$KEY_BUILD" && test -n "$KEY_BUILD_PUB"
+      - name: Package only the HFGJ core and rollback bridge with OpenWrt SDK
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: hfgj
+          PACKAGES: mihomo-hfgj mihomo-hfgj-rollback
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.HFGJ_KEY_BUILD }}
+          NO_REFRESH_CHECK: true
+      - name: Retain only the approved packages in the signed index
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          files = list(Path('bin/packages').glob('*/hfgj/*.ipk'))
+          assert len(files) == 2, 'Unexpected SDK package set'
+          PY
+          mkdir -p "staged/${{ matrix.branch }}/${{ matrix.arch }}"
+          cp -R "bin/packages/${{ matrix.arch }}/hfgj" "staged/${{ matrix.branch }}/${{ matrix.arch }}/hfgj"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: feed-${{ matrix.branch }}-${{ matrix.arch }}
+          path: staged/
+  assemble:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: hfgj-locked-core
+          path: .
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: feed-*
+          merge-multiple: true
+          path: staged
+      - name: Install verifier and assemble only after every target succeeded
+        env:
+          KEY_BUILD_PUB: ${{ secrets.HFGJ_KEY_BUILD_PUB }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y usign
+          umask 077
+          printf '%s\n' "$KEY_BUILD_PUB" > /tmp/hfgj-public.key
+          python3 hfgj/scripts/core_feed.py assemble --input staged --public-key /tmp/hfgj-public.key
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hfgj-feed-preview
+          path: public/
+          include-hidden-files: true
+      - name: Prepare Pages artifact when publication is explicitly enabled
+        if: vars.HFGJ_FEED_ENABLED == 'true' && (inputs.publish || github.event_name == 'schedule')
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+  deploy:
+    needs: assemble
+    if: vars.HFGJ_FEED_ENABLED == 'true' && (inputs.publish || github.event_name == 'schedule')
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy validated signed feed
+        id: deployment
+        uses: actions/deploy-pages@v4
