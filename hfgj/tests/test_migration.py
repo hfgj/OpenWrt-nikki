@@ -453,9 +453,27 @@ case "$path" in */usr/libexec/mihomo) echo "56592 $path";; *) echo "24477 $path"
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
             jobs=list((self.root/'external-backup/jobs').glob('job.*'))
-            if jobs and (jobs[0]/'status').exists() and 'exit_code=' in (jobs[0]/'status').read_text(): return jobs[0]
+            # The worker writes its final status before releasing the lock.
+            # Wait for cleanup too before asserting that the job has finished.
+            if (jobs and (jobs[0]/'status').exists()
+                    and 'exit_code=' in (jobs[0]/'status').read_text()
+                    and not (jobs[0].parent/'active.lock').exists()): return jobs[0]
             time.sleep(.1)
-        self.fail('Detached worker did not finish')
+        self.fail('Detached worker did not finish cleanup')
+
+    def test_final_status_does_not_finish_wait_before_unlock(self):
+        from unittest.mock import patch
+        jobs=self.root/'external-backup/jobs'
+        job=jobs/'job.fixture'
+        job.mkdir(parents=True)
+        (job/'status').write_text('exit_code=143\n')
+        lock=jobs/'active.lock'
+        lock.mkdir()
+        # Model the exact window between publishing the exit code and unlock.
+        with patch('test_migration.time.sleep',side_effect=lambda _:lock.rmdir()) as wait:
+            self.assertEqual(self.await_job(),job)
+            wait.assert_called_once_with(.1)
+        self.assertFalse(lock.exists())
 
     def test_detached_job_survives_launcher_session_disconnect(self):
         self.setup_job()
