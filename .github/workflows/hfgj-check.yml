@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install signature verifier
-        run: sudo apt-get update && sudo apt-get install -y usign
+      - name: Build pinned OpenWrt signature verifier
+        run: bash hfgj/scripts/setup-usign.sh
       - run: |
           python3 -m unittest discover -s hfgj/tests -v
           sh -n feed.sh install.sh migrate.sh

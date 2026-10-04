@@ -18,10 +18,10 @@ jobs:
         with:
           ref: hfgj
           fetch-depth: 0
+      - name: Build pinned OpenWrt signature verifier
+        run: bash hfgj/scripts/setup-usign.sh
       - name: Fetch official Nikki and preserve the distribution patch
         run: |
-          sudo apt-get update
-          sudo apt-get install -y usign
           git remote add upstream https://github.com/nikkinikki-org/OpenWrt-nikki.git
           bash hfgj/scripts/sync-upstream.sh
       - name: Explicitly dispatch the feed workflow after the token-authored push

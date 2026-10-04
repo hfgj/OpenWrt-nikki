@@ -37,10 +37,10 @@ jobs:
       - name: Lock the packaging source revision
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build pinned OpenWrt signature verifier
+        run: bash hfgj/scripts/setup-usign.sh
       - name: Local regression and shell checks
         run: |
-          sudo apt-get update
-          sudo apt-get install -y usign
           python3 -m unittest discover -s hfgj/tests -v
           sh -n feed.sh install.sh migrate.sh
       - name: Select explicitly configured device targets
@@ -122,12 +122,12 @@ jobs:
           pattern: feed-*
           merge-multiple: true
           path: staged
-      - name: Install verifier and assemble only after every target succeeded
+      - name: Build pinned OpenWrt signature verifier
+        run: bash hfgj/scripts/setup-usign.sh
+      - name: Assemble only after every target succeeded
         env:
           KEY_BUILD_PUB: ${{ secrets.HFGJ_KEY_BUILD_PUB }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y usign
           umask 077
           printf '%s\n' "$KEY_BUILD_PUB" > /tmp/hfgj-public.key
           python3 hfgj/scripts/core_feed.py assemble --input staged --public-key /tmp/hfgj-public.key
