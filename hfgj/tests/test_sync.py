@@ -30,8 +30,9 @@ class SyncTests(unittest.TestCase):
         (self.local/'hfgj/scripts').mkdir(parents=True)
         (self.local/'hfgj/tests').mkdir()
         (self.local/'hfgj/scripts/sync-upstream.sh').write_text((ROOT/'hfgj/scripts/sync-upstream.sh').read_text())
+        (self.local/'hfgj/scripts/setup-opkg.sh').write_text((ROOT/'hfgj/scripts/setup-opkg.sh').read_text())
         (self.local/'hfgj/tests/test_gate.py').write_text('import unittest\nfrom pathlib import Path\nclass Gate(unittest.TestCase):\n def test_regression(self): self.assertFalse(Path("bad-regression").exists())\n')
-        for name in ('feed.sh','install.sh','migrate.sh'):
+        for name in ('feed.sh','install.sh','migrate.sh','migrate-job.sh','rollback-package.sh'):
             (self.local/name).write_text('#!/bin/sh\nexit 0\n')
         (self.local/'shared').write_text('HFGJ patch\n')
         self.git(self.local,'add','.')

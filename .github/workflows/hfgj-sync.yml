@@ -20,6 +20,8 @@ jobs:
           fetch-depth: 0
       - name: Build pinned OpenWrt signature verifier
         run: bash hfgj/scripts/setup-usign.sh
+      - name: Build router-version opkg for offline integration tests
+        run: bash hfgj/scripts/setup-opkg.sh
       - name: Fetch official Nikki and preserve the distribution patch
         run: |
           git remote add upstream https://github.com/nikkinikki-org/OpenWrt-nikki.git

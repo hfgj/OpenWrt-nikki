@@ -14,7 +14,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build pinned OpenWrt signature verifier
         run: bash hfgj/scripts/setup-usign.sh
+      - name: Build router-version opkg for offline integration tests
+        run: bash hfgj/scripts/setup-opkg.sh
       - run: |
           python3 -m unittest discover -s hfgj/tests -v
-          sh -n feed.sh install.sh migrate.sh
-          bash -n hfgj/scripts/sync-upstream.sh
+          sh -n feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh
+          bash -n hfgj/scripts/sync-upstream.sh hfgj/scripts/setup-opkg.sh

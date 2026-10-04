@@ -39,10 +39,12 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Build pinned OpenWrt signature verifier
         run: bash hfgj/scripts/setup-usign.sh
+      - name: Build router-version opkg for offline integration tests
+        run: bash hfgj/scripts/setup-opkg.sh
       - name: Local regression and shell checks
         run: |
           python3 -m unittest discover -s hfgj/tests -v
-          sh -n feed.sh install.sh migrate.sh
+          sh -n feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh
       - name: Select explicitly configured device targets
         env:
           TARGETS: ${{ vars.HFGJ_TARGETS }}
@@ -61,7 +63,6 @@ jobs:
             hfgj/build/
             mihomo-hfgj/core.mk
             mihomo-hfgj/core.json
-            mihomo-hfgj-rollback/core.mk
             hfgj/targets.json
           include-hidden-files: true
   build:
@@ -85,12 +86,12 @@ jobs:
           KEY_BUILD_PUB: ${{ secrets.HFGJ_KEY_BUILD_PUB }}
         run: |
           test -n "$KEY_BUILD" && test -n "$KEY_BUILD_PUB"
-      - name: Package only the HFGJ core and rollback bridge with OpenWrt SDK
+      - name: Package only the HFGJ core with OpenWrt SDK
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
           FEEDNAME: hfgj
-          PACKAGES: mihomo-hfgj mihomo-hfgj-rollback
+          PACKAGES: mihomo-hfgj
           INDEX: 1
           KEY_BUILD: ${{ secrets.HFGJ_KEY_BUILD }}
           NO_REFRESH_CHECK: true
@@ -99,7 +100,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           files = list(Path('bin/packages').glob('*/hfgj/*.ipk'))
-          assert len(files) == 2, 'Unexpected SDK package set'
+          assert len(files) == 1, 'Unexpected SDK package set'
           PY
           mkdir -p "staged/${{ matrix.branch }}/${{ matrix.arch }}"
           cp -R "bin/packages/${{ matrix.arch }}/hfgj" "staged/${{ matrix.branch }}/${{ matrix.arch }}/hfgj"

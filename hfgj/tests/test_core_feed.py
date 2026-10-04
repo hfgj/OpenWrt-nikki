@@ -24,9 +24,18 @@ ARCH = "aarch64_generic"
 def tar_bytes(files):
     value = io.BytesIO()
     with tarfile.open(fileobj=value, mode="w:gz", format=tarfile.GNU_FORMAT) as archive:
+        directories={'.'}
+        for name, _, _ in files:
+            directories.update(str(parent) for parent in Path(name).parents)
+        for name in sorted(directories, key=lambda x:(x.count('/'),x)):
+            entry=tarfile.TarInfo('./' if name=='.' else './'+name+'/')
+            entry.type=tarfile.DIRTYPE;entry.mode=0o755
+            entry.uid,entry.gid=os.getuid(),os.getgid()
+            archive.addfile(entry)
         for name, content, mode in files:
             entry = tarfile.TarInfo("./" + name)
             entry.size, entry.mode = len(content), mode
+            entry.uid,entry.gid=os.getuid(),os.getgid()
             archive.addfile(entry, io.BytesIO(content))
     return value.getvalue()
 
@@ -48,9 +57,9 @@ def fixture():
 
 def ipk(path, metadata, binary, *, bridge=False, extra=None, wrong_arch=False):
     name = "mihomo-hfgj-rollback" if bridge else "mihomo-hfgj"
-    control = f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {'x86_64' if wrong_arch else ARCH}\nProvides: mihomo\n"
+    control = f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {'x86_64' if wrong_arch else ARCH}\nProvides: mihomo\nInstalled-Size: {max(32, len(binary)+len(json.dumps(metadata)))}\n"
     if not bridge:
-        control += "Conflicts: mihomo-meta, mihomo-alpha\nAlternatives: 300:/usr/bin/mihomo:/usr/libexec/mihomo\n"
+        control += "Conflicts: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nReplaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nAlternatives: 300:/usr/bin/mihomo:/usr/libexec/mihomo\n"
     payload = [("usr/share/mihomo-hfgj-rollback/README", b"temporary bridge\n", 0o644)] if bridge else [
         ("usr/libexec/mihomo", binary, 0o755), ("usr/share/mihomo-hfgj/core.json", json.dumps(metadata).encode(), 0o644)]
     if extra:
@@ -106,13 +115,10 @@ class CoreFeedTests(unittest.TestCase):
                 ipk(path, metadata, binary, **change)
                 with self.assertRaises(ValueError):
                     feed.inspect_ipk(path, metadata, ARCH)
-            ipk(path, metadata, binary, bridge=True)
-            feed.inspect_bridge(path, metadata, ARCH)
-            with self.assertRaises(ValueError):
-                feed.inspect_bridge(path, dict(metadata, package_release=2), ARCH)
             recipe_root = Path(temporary) / 'recipes'
             feed.write_recipe(recipe_root, metadata)
-            self.assertEqual((recipe_root/'mihomo-hfgj/core.mk').read_bytes(), (recipe_root/'mihomo-hfgj-rollback/core.mk').read_bytes())
+            self.assertTrue((recipe_root/'mihomo-hfgj/core.mk').is_file())
+            self.assertFalse((recipe_root/'mihomo-hfgj-rollback').exists())
 
     def test_package_versions_increase_for_core_and_recipe_updates(self):
         _, _, _, metadata = fixture()
@@ -134,23 +140,27 @@ class CoreFeedTests(unittest.TestCase):
             stage = root / "input/openwrt-24.10" / ARCH / "hfgj"
             stage.mkdir(parents=True)
             core = stage / "mihomo-hfgj_test.ipk"
-            bridge = stage / "mihomo-hfgj-rollback_test.ipk"
             ipk(core, metadata, binary)
-            ipk(bridge, metadata, binary, bridge=True)
-            text = "".join(f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {ARCH}\nProvides: mihomo\nFilename: {path.name}\nSize: {path.stat().st_size}\nSHA256sum: {feed.digest(path.read_bytes())}\n\n" for name, path in (("mihomo-hfgj", core), ("mihomo-hfgj-rollback", bridge)))
-            feed.inspect_index(text, [core, bridge], metadata, ARCH)
-            for changed in (text.replace(ARCH, 'x86_64'), text.replace('Filename: '+core.name, 'Filename: ../wrong.ipk'), text+text):
+            text = "".join(f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {ARCH}\nProvides: mihomo\nConflicts: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nReplaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nFilename: {path.name}\nSize: {path.stat().st_size}\nSHA256sum: {feed.digest(path.read_bytes())}\n\n" for name, path in (("mihomo-hfgj", core),))
+            feed.inspect_index(text, [core], metadata, ARCH)
+            for changed in (text.replace(ARCH, 'x86_64'), text.replace('Filename: '+core.name, 'Filename: ../wrong.ipk'), text+text, text.replace('Replaces:', 'Ignored:'), text.replace('mihomo-alpha, mihomo-hfgj-rollback', 'mihomo-alpha')):
                 with self.assertRaises(ValueError):
-                    feed.inspect_index(changed, [core, bridge], metadata, ARCH)
+                    feed.inspect_index(changed, [core], metadata, ARCH)
             (stage / "Packages").write_text(text)
             (stage / "Packages.gz").write_bytes(gzip.compress(text.encode()))
-            (stage / "index.json").write_text(json.dumps({'version': 2, 'architecture': ARCH, 'packages': {name: feed.full_version(metadata) for name in ('mihomo-hfgj','mihomo-hfgj-rollback')}}))
+            (stage / "index.json").write_text(json.dumps({'version': 2, 'architecture': ARCH, 'packages': {name: feed.full_version(metadata) for name in ('mihomo-hfgj',)}}))
             subprocess.run([usign, "-S", "-m", str(stage / "Packages"), "-s", str(private)], check=True)
             (root / "targets.json").write_text(json.dumps({"include": [{"branch": "openwrt-24.10", "arch": ARCH}]}))
             (root / "core.json").write_text(json.dumps(metadata))
             args = SimpleNamespace(root=ROOT, metadata=root / "core.json", targets=root / "targets.json", input=root / "input", output=root / "public", usign=usign, public_key=public)
             feed.assemble(args)
             self.assertTrue((root / "public/feed-state.json").is_file())
+            self.assertTrue((root / "public/migrate-job.sh").is_file())
+            entries=(root / "public/bootstrap.sha256").read_text().splitlines()
+            self.assertEqual(len(entries),5)
+            for entry in entries:
+                digest,name=entry.split('  ',1)
+                self.assertEqual(digest,feed.digest((root/'public'/name).read_bytes()))
             self.assertFalse(any(path.suffix == ".sec" for path in (root / "public").rglob("*")))
             (stage / "Packages").write_text(text + "tampered\n")
             args.output = root / "bad-output"

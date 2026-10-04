@@ -3,8 +3,8 @@
 set -eu
 HFGJ_FEED_URL=${HFGJ_FEED_URL:-https://hfgj.github.io/OpenWrt-nikki}
 hfgj_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-[ -f "$hfgj_script_dir/feed.sh" ] && [ -f "$hfgj_script_dir/migrate.sh" ] || {
-    echo 'Download feed.sh, install.sh and migrate.sh into the same directory first' >&2; exit 1;
+[ -f "$hfgj_script_dir/feed.sh" ] && [ -f "$hfgj_script_dir/migrate.sh" ] && [ -f "$hfgj_script_dir/rollback-package.sh" ] || {
+    echo 'Download feed.sh, install.sh, migrate.sh and rollback-package.sh into the same directory first' >&2; exit 1;
 }
 case "${1:-}" in
     --apply) ;;

@@ -22,7 +22,7 @@ define Package/mihomo-hfgj
   URL:=https://github.com/hfgj/mihomo
   DEPENDS:=@aarch64 +ca-bundle +ip-full +kmod-inet-diag +kmod-tun
   PROVIDES:=mihomo
-  CONFLICTS:=mihomo-meta mihomo-alpha
+  CONFLICTS:=mihomo-meta mihomo-alpha mihomo-hfgj-rollback
   ALTERNATIVES:=300:/usr/bin/mihomo:/usr/libexec/mihomo
 endef
 
@@ -64,3 +64,13 @@ exit 0
 endef
 
 $(eval $(call BuildPackage,mihomo-hfgj))
+
+# OpenWrt 24.10 does not emit a REPLACES variable. Extend the actual generated
+# control before packaging/index signing; keep every SDK-generated field.
+ifeq ($(DUMP),)
+HFGJ_ORIGINAL_CONTROL := $(Package/mihomo-hfgj/CONTROL)
+define Package/mihomo-hfgj/CONTROL
+$(HFGJ_ORIGINAL_CONTROL)
+Replaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback
+endef
+endif

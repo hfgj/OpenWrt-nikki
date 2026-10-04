@@ -1,5 +1,8 @@
 include $(TOPDIR)/rules.mk
 
+# Retired after the 2026-10-05 migration repair. Not built or distributed.
+# A Provides-only bridge cannot unblock opkg's installed-depender remove check.
+
 PKG_NAME:=mihomo-hfgj-rollback
 -include $(CURDIR)/core.mk
 PKG_VERSION:=$(if $(HFGJ_PACKAGE_VERSION),$(HFGJ_PACKAGE_VERSION),0.0.0)
