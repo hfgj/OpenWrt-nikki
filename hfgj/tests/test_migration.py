@@ -108,6 +108,8 @@ class MigrationTests(unittest.TestCase):
         self.command('id', '#!/bin/sh\necho 0\n')
         self.command('uname', '#!/bin/sh\necho aarch64\n')
         self.command('usign', '#!/bin/sh\nexit 0\n')
+        # Enforce Linux's same-file rename rejection on macOS fixtures too.
+        self.command('mv', '#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\na,b=map(Path,sys.argv[-2:])\nif a.resolve()==b.resolve(): sys.exit("same-file rename rejected")\na.replace(b)\n')
         self.command('df', '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted"\necho "fixture 2000000 1 ${FIXTURE_FREE_KIB:-1999999} 1% /"\n')
         self.command('jsonfilter', '#!/usr/bin/env python3\nimport json,sys\nx=json.load(open(sys.argv[2])); print(x[sys.argv[4].removeprefix("@.")])\n')
         service = r'''#!/bin/sh

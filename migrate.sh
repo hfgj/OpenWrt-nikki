@@ -66,7 +66,11 @@ record_package() {
         if usign -V -m "$hfgj_list" -x "$hfgj_list.sig" -P /etc/opkg/keys; then hfgj_trusted=1; break; fi
     done
     [ "$hfgj_trusted" = 1 ] || { echo "Downloaded package does not match a trusted signed index: $hfgj_pkg" >&2; return 1; }
-    mv "$hfgj_downloaded" "$hfgj_pkg.ipk"
+    # opkg may already use the desired basename. GNU/BusyBox mv can reject
+    # a same-file rename, although macOS mv accepts it.
+    if [ "${hfgj_downloaded#./}" != "$hfgj_pkg.ipk" ]; then
+        mv "$hfgj_downloaded" "$hfgj_pkg.ipk"
+    fi
 }
 validate_hfgj_package() {
     [ "$(ipk_field "$1" Package)" = mihomo-hfgj ]
