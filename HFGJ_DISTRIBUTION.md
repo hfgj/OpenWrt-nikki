@@ -25,6 +25,7 @@ OpenWrt 24.10 的标准 SDK 不输出 `Replaces` 字段，因此脚本在两种�
 | 文件 | 具体作用 |
 | --- | --- |
 | `mihomo-hfgj/Makefile` | SDK 包装已验证的 HFGJ ARM64 Release，包含正常升级时的 Nikki 重启钩子 |
+| `mihomo-hfgj-rollback/Makefile` | 独立源包定义，匹配官方 SDK Action 的目录构建接口；仅提供迁移期虚拟依赖 |
 | `hfgj/scripts/setup-usign.sh` | 为 CI 从 OpenWrt 官方仓库编译固定提交的 usign；不依赖 Ubuntu apt 提供该包 |
 | `hfgj/scripts/core_feed.py` | 锁定 Release 版本/摘要、生成包参数、检查 IPK 与 signed index、组装完整软件源 |
 | `feed.sh` | 检查固件/架构/签名策略，验证自有索引，再添加公钥和软件源；保留现有 Nikki 源 |

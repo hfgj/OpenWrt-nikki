@@ -4,6 +4,7 @@
 /hfgj/build/
 /mihomo-hfgj/core.mk
 /mihomo-hfgj/core.json
+/mihomo-hfgj-rollback/core.mk
 __pycache__/
 *.pyc
 key-build

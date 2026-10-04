@@ -108,6 +108,11 @@ class CoreFeedTests(unittest.TestCase):
                     feed.inspect_ipk(path, metadata, ARCH)
             ipk(path, metadata, binary, bridge=True)
             feed.inspect_bridge(path, metadata, ARCH)
+            with self.assertRaises(ValueError):
+                feed.inspect_bridge(path, dict(metadata, package_release=2), ARCH)
+            recipe_root = Path(temporary) / 'recipes'
+            feed.write_recipe(recipe_root, metadata)
+            self.assertEqual((recipe_root/'mihomo-hfgj/core.mk').read_bytes(), (recipe_root/'mihomo-hfgj-rollback/core.mk').read_bytes())
 
     def test_package_versions_increase_for_core_and_recipe_updates(self):
         _, _, _, metadata = fixture()

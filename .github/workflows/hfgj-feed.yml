@@ -61,6 +61,7 @@ jobs:
             hfgj/build/
             mihomo-hfgj/core.mk
             mihomo-hfgj/core.json
+            mihomo-hfgj-rollback/core.mk
             hfgj/targets.json
           include-hidden-files: true
   build:

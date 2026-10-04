@@ -31,21 +31,6 @@ define Package/mihomo-hfgj/description
   Nikki and LuCI remain official packages. Update this core through opkg/LuCI.
 endef
 
-# Temporary dependency provider during either package-name transition.
-# OpenWrt 24.10's standard SDK does not emit a Replaces control field.
-define Package/mihomo-hfgj-rollback
-  SECTION:=net
-  CATEGORY:=Network
-  TITLE:=HFGJ core rollback dependency bridge
-  URL:=https://github.com/hfgj/OpenWrt-nikki
-  PROVIDES:=mihomo
-endef
-
-define Package/mihomo-hfgj-rollback/description
-  Temporary dependency provider for migrate.sh migration/rollback only.
-  Do not install this package as a usable Mihomo core.
-endef
-
 define Build/Prepare
 	[ -n "$(HFGJ_CORE_VERSION)" ] || { echo "Run core_feed.py prepare first" >&2; exit 1; }
 	mkdir -p $(PKG_BUILD_DIR)
@@ -66,11 +51,6 @@ define Package/mihomo-hfgj/install
 	$(INSTALL_DATA) $(CURDIR)/core.json $(1)/usr/share/mihomo-hfgj/core.json
 endef
 
-define Package/mihomo-hfgj-rollback/install
-	$(INSTALL_DIR) $(1)/usr/share/mihomo-hfgj-rollback
-	echo "Temporary dependency bridge; no core binary" > $(1)/usr/share/mihomo-hfgj-rollback/README
-endef
-
 # A LuCI package upgrade must switch the running core as well as the file.
 # The migration script stops Nikki first, so it controls its own start/rollback.
 define Package/mihomo-hfgj/postinst
@@ -84,4 +64,3 @@ exit 0
 endef
 
 $(eval $(call BuildPackage,mihomo-hfgj))
-$(eval $(call BuildPackage,mihomo-hfgj-rollback))
