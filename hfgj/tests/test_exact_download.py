@@ -16,7 +16,7 @@ import test_migration as migration
 
 
 def preparation_prefix(script):
-    action='case "$hfgj_action" in --plan|--apply|--rollback) ;; *) echo \'Usage: sh migrate.sh --plan|--apply|--rollback BACKUP_DIR\' >&2; exit 1 ;; esac'
+    action='case "$hfgj_action" in --plan|--apply|--apply-fresh|--rollback) ;; *) echo \'Usage: sh migrate.sh --plan|--apply|--apply-fresh|--rollback BACKUP_DIR\' >&2; exit 1 ;; esac'
     boundary='hfgj_transaction_active=1\n'
     assert script.count(action)==script.count(boundary)==1
     return script.split(boundary)[0].replace(action,

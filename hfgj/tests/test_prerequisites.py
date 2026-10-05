@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
-from test_core_feed import ROOT
+from test_core_feed import ROOT, feed
 import test_migration as migration
 
 
@@ -22,7 +22,7 @@ class PrerequisiteTests(unittest.TestCase):
         self.manifest()
 
     def manifest(self):
-        names = ('feed.sh', 'install.sh', 'migrate.sh', 'migrate-job.sh', 'rollback-package.sh')
+        names = feed.BOOTSTRAP_FILES
         (self.root/'bootstrap.sha256').write_text(''.join(
             hashlib.sha256((self.root/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in names))
 
@@ -139,7 +139,10 @@ class PrerequisiteTests(unittest.TestCase):
         (self.root/'usr/bin/mihomo').unlink()
         (self.root/'usr/libexec/mihomo').unlink()
         (self.root/'running').unlink()
-        result = self.run_script('install.sh', '--apply')
+        (self.root/'etc/init.d/nikki').unlink()
+        (self.root/'etc/config/nikki').unlink()
+        shutil.rmtree(self.root/'etc/nikki')
+        result = self.run_script('install.sh', '--apply-fresh')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         events = self.events()
         positions = [events.index(value) for value in ('feed\n', 'opkg install coreutils-stat\n',
@@ -166,6 +169,27 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertNotIn('opkg download', self.events())
         saved = next((self.root/'external-backup').glob('migration.*'))
         self.assertEqual((saved/'mihomo-meta.ipk').read_bytes(), (self.root/'repository/mihomo-meta.ipk').read_bytes())
+
+    def test_fresh_only_refuses_existing_installation_before_feed(self):
+        result = self.run_script('install.sh', '--apply-fresh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Fresh install refused', result.stderr)
+        self.assertNotIn('feed\n', self.events())
+        self.assert_untouched()
+
+    def test_fresh_only_rechecks_state_after_feed_preparation(self):
+        (self.root/'packages.json').write_text('{}')
+        for name in ('usr/bin/mihomo','usr/libexec/mihomo','etc/init.d/nikki','etc/config/nikki','running'):
+            (self.root/name).unlink()
+        shutil.rmtree(self.root/'etc/nikki')
+        (self.root/'feed.sh').write_text('#!/bin/sh\necho feed >> "$ROUTER_FIXTURE/events"\nprintf \'%s\\n\' \'{"mihomo-meta":"1.19.31"}\' > "$ROUTER_FIXTURE/packages.json"\n')
+        self.manifest()
+        result = self.run_script('install.sh', '--apply-fresh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Fresh install refused', result.stderr)
+        self.assertNotIn('service stop', self.events())
+        self.assertNotIn('install ./', self.events())
+        self.assertEqual(json.loads((self.root/'packages.json').read_text()), {'mihomo-meta':'1.19.31'})
 
 
 if __name__ == '__main__': unittest.main()

@@ -18,5 +18,5 @@ jobs:
         run: bash hfgj/scripts/setup-opkg.sh
       - run: |
           python3 -m unittest discover -s hfgj/tests -v
-          for script in feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh; do sh -n "$script" || exit; done
+          for script in setup.sh feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh; do sh -n "$script" || exit; done
           for script in hfgj/scripts/*.sh; do bash -n "$script" || exit; done

@@ -83,7 +83,7 @@ cleanup_launcher() {
 }
 trap cleanup_launcher EXIT
 hfgj_job=$(mktemp -d "$HFGJ_JOB_DIR/job.XXXXXX")
-for hfgj_name in feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh bootstrap.sha256; do
+for hfgj_name in setup.sh feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh bootstrap.sha256; do
     cp "$hfgj_script_dir/$hfgj_name" "$hfgj_job/"
 done
 printf '%s\n' "$hfgj_lock" > "$hfgj_job/lock-path"

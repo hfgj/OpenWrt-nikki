@@ -32,3 +32,7 @@ gh workflow run hfgj-feed.yml -R hfgj/OpenWrt-nikki --ref hfgj -f publish=false
 首次启用 AUTO_SYNC/AUTO_FEED 需要明确授权。启用后正常批准范围内自动维护不逐次确认；异常停止并报告。触发 Actions 后提供运行链接与待核验项目，等用户告知完成再查询，不持续轮询。
 
 设备更新、迁移、内核切换、服务停止/重启及回退由用户手动执行。交付命令时核对实际设备和备份，不复用旧临时脚本或 manifest。
+
+## 简化安装入口
+
+新增 setup.sh 与仅首装模式仍为本地未发布修改，说明见 INSTALLATION.md。发布清单包含六个脚本；后续发布必须核验入口、bootstrap 和首页命令一致。当前自动 feed 已启用，推送这些分发修改会触发构建及自动发布，推送前必须明确批准这次新增入口的发布范围。

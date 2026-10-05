@@ -9,7 +9,7 @@ HFGJ_STORAGE_MOUNT=${HFGJ_STORAGE_MOUNT:-}
 opkg_work() { opkg --tmp-dir "$hfgj_work/opkg-tmp" "$@"; }
 hfgj_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 hfgj_action=${1:---plan}
-case "$hfgj_action" in --plan|--apply|--rollback) ;; *) echo 'Usage: sh migrate.sh --plan|--apply|--rollback BACKUP_DIR' >&2; exit 1 ;; esac
+case "$hfgj_action" in --plan|--apply|--apply-fresh|--rollback) ;; *) echo 'Usage: sh migrate.sh --plan|--apply|--apply-fresh|--rollback BACKUP_DIR' >&2; exit 1 ;; esac
 command -v opkg >/dev/null || { echo 'Only opkg is supported initially' >&2; exit 1; }
 [ "$(id -u)" = 0 ] || { echo 'Run as root' >&2; exit 1; }
 . /etc/openwrt_release
@@ -351,6 +351,21 @@ done
 installed coreutils-stat || {
     echo 'Missing registered coreutils-stat dependency; run sh install.sh --prepare-tools before migration; nothing changed' >&2; exit 1;
 }
+fresh_only_check() {
+    [ "$hfgj_action" = --apply-fresh ] || return 0
+    for hfgj_pkg in mihomo-hfgj mihomo-meta mihomo-alpha mihomo-hfgj-rollback mihomo nikki luci-app-nikki; do
+        hfgj_status=$(opkg status "$hfgj_pkg") || return 1
+        if printf '%s\n' "$hfgj_status" | grep -q '^Status: .* installed$'; then
+            echo 'Fresh install refused: package state changed; review migration first' >&2; return 1
+        fi
+    done
+    for hfgj_path in /usr/bin/mihomo /usr/libexec/mihomo /etc/init.d/nikki /etc/config/nikki /etc/nikki; do
+        [ ! -e "$hfgj_path" ] && [ ! -L "$hfgj_path" ] || {
+            echo 'Fresh install refused: core/service path exists' >&2; return 1;
+        }
+    done
+}
+fresh_only_check
 hfgj_old_package=
 for hfgj_pkg in mihomo-hfgj mihomo-meta mihomo-alpha; do
     if installed "$hfgj_pkg"; then
@@ -462,6 +477,7 @@ check_space /usr/libexec 8192
 if [ -n "$hfgj_old_package" ]; then
     unchanged_original || { echo 'Original package/binary changed during preparation; service untouched' >&2; exit 1; }
 fi
+fresh_only_check
 hfgj_transaction_active=1
 hfgj_install_attempted=0
 finish_transaction() {

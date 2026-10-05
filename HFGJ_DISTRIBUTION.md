@@ -1,5 +1,7 @@
 # HFGJ Nikki 分发层
 
+2026-10-06 本地更新：简化 setup.sh 入口与仅首装模式尚未提交/发布，bootstrap 扩为六脚本。当前线上仍为此前版本。新入口操作说明见 hfgj/INSTALLATION.md；下述旧状态记录不代表当前发布结论。
+
 状态更新：2026-10-05。301W 已由用户手动完成迁移，HFGJ 包登记、实际运行内核及恢复材料已有核验；当前缓存下 provider 映射/专属 DNS 的 12 次节点抽测通过。准确包下载及 stat/入口/构建修复仍为本地待提交、待发布源码。本轮没有设备操作，新的源码不能称为线上或实机验收通过。
 
 已发布源来自 `0445b9c`：https://hfgj.github.io/OpenWrt-nikki/ 。公开 migrate.sh 尚未包含准确下载修复，不能下载覆盖设备已经修复的脚本。301W 首次迁移已完成，不能重复执行首迁入口。设备证据、实际恢复目录和用户手动命令见工作区 `PROXY_RULES_HANDOFF.md` 及 `notes/nikki-301w-manual-migration-and-rollback-20261005.md`；它们是状态记录，不授予新操作权限。
@@ -40,7 +42,7 @@ stat 检查实际执行 `-c '%a:%u:%g:%Y'` 和 `-c '%a:%u:%g'`，验证格式和
 
 以下操作用于修复正式发布或明确交付并核验之后的新设备；本地批准不等于发布授权，现已迁移的 301W 不重跑首迁。
 
-同一次分发下载 `feed.sh`、`install.sh`、`migrate.sh`、`migrate-job.sh`、`rollback-package.sh`、`bootstrap.sha256` 到同一目录。manifest 必须恰好包含五个脚本各一次，名称与摘要格式正确，所有文件摘要匹配。install 和后台启动/worker 共用同一检查入口。清单用于完整性检查，首次下载仍需与已审阅的来源/摘要比对；同站清单不是独立信任锚。不使用 curl-to-shell。
+同一次分发下载 `setup.sh`、`feed.sh`、`install.sh`、`migrate.sh`、`migrate-job.sh`、`rollback-package.sh`、`bootstrap.sha256` 到同一目录。manifest 必须恰好包含六个脚本各一次，名称与摘要格式正确，所有文件摘要匹配。install 和后台启动/worker 共用同一检查入口。清单用于完整性检查，首次下载仍需与已审阅的来源/摘要比对；同站清单不是独立信任锚。不使用 curl-to-shell。
 
 首装顺序为：完整 bootstrap 校验 → feed → 工具准备 → migrate apply → 确认 HFGJ 包已登记 → 官方 Nikki/LuCI/语言包。用户手动执行：
 
@@ -100,11 +102,11 @@ cat "$B/transaction"
 
 云端目标覆盖写入忽略的 `hfgj/build/targets.json`，不改已提交 targets；锁定矩阵随构建 artifact 传递至 assemble。目标矩阵变化也要求更高版本。任何源码逻辑变化重建整份源，不自动更新设备。
 
-SDK 只分发 core 一个 IPK；官方工具由设备发行版源提供。组装校验 coreutils-stat 依赖在 IPK 和签名索引中存在且一致，同时核对包身份、版本、架构、payload、替换字段、文件名/大小/摘要、签名、压缩索引及 JSON 索引。所有目标成功后才组成完整 Pages artifact。bootstrap 清单由此次源码生成，五份文件必须逐字节一致。
+SDK 只分发 core 一个 IPK；官方工具由设备发行版源提供。组装校验 coreutils-stat 依赖在 IPK 和签名索引中存在且一致，同时核对包身份、版本、架构、payload、替换字段、文件名/大小/摘要、签名、压缩索引及 JSON 索引。所有目标成功后才组成完整 Pages artifact。bootstrap 清单由此次源码生成，六份文件必须逐字节一致。
 
 `hfgj-feed.yml` 手动输入 publish 默认 false。提交/推送、真实 SDK 预览、正式签名源发布各自确认；本轮不执行。定时 feed 受 HFGJ_AUTO_FEED 控制，Pages 受 HFGJ_FEED_ENABLED 控制；Nikki 同步受 HFGJ_AUTO_SYNC 控制。本轮未查询或更改远端开关，不能据历史快照称自动维护已启用。
 
-Nikki 云端同步只允许官方镜像快进，然后合入 hfgj、测试成功后原子推送；冲突/回归/Shell 语法失败不改远端。五个 Shell 文件逐个 sh -n，不能使用只检查第一个脚本的多参数写法。Mihomo Meta→hfgj 上游自动同步尚待独立实现，Alpha 尚未移植。
+Nikki 云端同步只允许官方镜像快进，然后合入 hfgj、测试成功后原子推送；冲突/回归/Shell 语法失败不改远端。六个 Shell 文件逐个 sh -n，不能使用只检查第一个脚本的多参数写法。Mihomo Meta→hfgj 上游自动同步尚待独立实现，Alpha 尚未移植。
 
 ## 验证范围
 

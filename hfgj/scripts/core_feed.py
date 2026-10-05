@@ -27,7 +27,7 @@ CORE_RE = re.compile(r"v(\d+\.\d+\.\d+)-hfgj\.([0-9a-f]{12})\Z")
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_BINARY = 128 * 1024 * 1024
-BOOTSTRAP_FILES = ("feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh")
+BOOTSTRAP_FILES = ("setup.sh", "feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh")
 
 
 def digest(data):
@@ -395,7 +395,21 @@ def _assemble(args):
     state = {"core": metadata, "targets": targets, "packaging_sha256": packaging_fingerprint(args.root)}
     (args.output / "feed-state.json").write_text(json.dumps(state, indent=2) + "\n")
     (args.output / ".nojekyll").touch()
-    (args.output / "index.html").write_text("<!doctype html><meta charset=utf-8><title>HFGJ Mihomo feed</title><p>HFGJ Mihomo stable packages. Nikki and LuCI use the official feed.</p>\n")
+    (args.output / "index.html").write_text("""<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HFGJ Nikki 安装与更新</title>
+<body><h1>HFGJ 内核 + Nikki</h1>
+<p>HFGJ 源提供稳定 Mihomo 内核；Nikki、LuCI 和语言包使用官方源。</p>
+<h2>新设备安装</h2>
+<p>简化入口当前支持 OpenWrt/ImmortalWrt 24.10、aarch64_cortex-a53、opkg。通过 SSH 以 root 手动执行：</p>
+<pre><code>wget -O /tmp/hfgj-setup.sh https://hfgj.github.io/OpenWrt-nikki/setup.sh &amp;&amp;
+sh /tmp/hfgj-setup.sh</code></pre>
+<p>全新设备校验后安装；已有 Nikki/Mihomo 时仅显示迁移要求并停止；已安装 HFGJ 时提示通过 LuCI 更新。</p>
+<p>安装资料和日志保存在打印的持久目录。安装失败先检查日志；安装完成后在 LuCI 配置 Nikki 并验证连接。</p>
+<h2>后续升级</h2><p>在 LuCI 软件包页面刷新列表，按需升级 mihomo-hfgj、nikki、luci-app-nikki 和语言包。内核升级可能重启 Nikki。</p>
+<p>已有内核迁移需要先核验本机备份与离线恢复材料；本入口不会自动迁移。设备操作均由用户手动发起。</p>
+</body></html>
+""")
 
 
 def main():

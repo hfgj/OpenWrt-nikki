@@ -467,11 +467,12 @@ case "$path" in */usr/libexec/mihomo) echo "56592 $path";; *) echo "24477 $path"
 
     def setup_job(self, *, fail=False):
         self.write_install_script()
+        (self.root/'setup.sh').write_text((ROOT/'setup.sh').read_text())
         (self.root/'feed.sh').write_text('#!/bin/sh\nsleep 1\n'+('exit 7\n' if fail else 'exit 0\n'))
         (self.root/'migrate-job.sh').write_text((ROOT/'migrate-job.sh').read_text())
         self.root.joinpath('bootstrap.sha256').write_text(''.join(
             hashlib.sha256((self.root/name).read_bytes()).hexdigest()+'  '+name+'\n'
-            for name in ('feed.sh','install.sh','migrate.sh','migrate-job.sh','rollback-package.sh')))
+            for name in ('setup.sh','feed.sh','install.sh','migrate.sh','migrate-job.sh','rollback-package.sh')))
         self.env['HFGJ_BACKUP_DIR']=str(self.root/'external-backup')
         self.env['HFGJ_WORK_DIR']=str(self.root/'external-work')
 
@@ -553,6 +554,21 @@ case "$path" in */usr/libexec/mihomo) echo "56592 $path";; *) echo "24477 $path"
         self.assertTrue((self.root/'running').exists())
 
 
+
+    def test_fresh_only_rechecks_packages_at_transaction_boundary(self):
+        (self.root/'packages.json').write_text('{}')
+        for name in ('usr/bin/mihomo','usr/libexec/mihomo','etc/init.d/nikki','etc/config/nikki','running'):
+            (self.root/name).unlink()
+        shutil.rmtree(self.root/'etc/nikki')
+        downloader=self.root/'mock-bin/wget'
+        downloader.write_text(downloader.read_text()+"\nif source.name=='mihomo-hfgj.ipk': (root/'packages.json').write_text('{\"mihomo-meta\":\"1.19.31\"}')\n")
+        result=self.run_migration('--apply-fresh')
+        self.assertNotEqual(result.returncode,0,result.stdout)
+        self.assertIn('Fresh install refused',result.stderr)
+        events=(self.root/'events').read_text()
+        self.assertNotIn('service stop',events)
+        self.assertNotIn('install ./',events)
+        self.assertEqual(json.loads((self.root/'packages.json').read_text()),{'mihomo-meta':'1.19.31'})
 
 if __name__ == '__main__':
     unittest.main()
