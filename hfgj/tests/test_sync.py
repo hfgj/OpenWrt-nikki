@@ -94,3 +94,15 @@ class SyncTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIn('syntax error',result.stderr.lower())
         self.assertEqual(self.refs(),self.before)
+
+    def test_syntax_error_in_later_bash_file_blocks_both_pushes(self):
+        (self.local/'hfgj/scripts/zzz-invalid.sh').write_text('#!/bin/bash\nif then\n')
+        self.git(self.local,'add','hfgj/scripts/zzz-invalid.sh')
+        self.git(self.local,'commit','-m','fixture with broken later bash file')
+        self.git(self.local,'push','origin','hfgj')
+        self.before = self.refs()
+        self.update_official('upstream-feature','new upstream\n')
+        result=self.sync()
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('syntax error',result.stderr.lower())
+        self.assertEqual(self.refs(),self.before)

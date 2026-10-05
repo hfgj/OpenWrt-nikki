@@ -18,6 +18,6 @@ if ! git merge --no-edit upstream/main; then
 fi
 python3 -m unittest discover -s hfgj/tests -v
 for script in feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh; do sh -n "$script" || exit; done
-bash -n hfgj/scripts/setup-opkg.sh
+for script in hfgj/scripts/*.sh; do bash -n "$script" || exit; done
 # Push the mirror and patch together; a racing manual push fails instead of being overwritten.
 git push --atomic origin upstream/main:refs/heads/main HEAD:refs/heads/hfgj

@@ -1,6 +1,8 @@
 name: HFGJ core feed
 
 on:
+  push:
+    branches: [hfgj]
   workflow_dispatch:
     inputs:
       publish:
@@ -23,7 +25,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.repository == 'hfgj/OpenWrt-nikki' && (github.event_name != 'schedule' || vars.HFGJ_AUTO_FEED == 'true')
+    if: github.repository == 'hfgj/OpenWrt-nikki' && (github.event_name == 'workflow_dispatch' || vars.HFGJ_AUTO_FEED == 'true')
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
@@ -45,6 +47,7 @@ jobs:
         run: |
           python3 -m unittest discover -s hfgj/tests -v
           for script in feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh; do sh -n "$script" || exit; done
+          for script in hfgj/scripts/*.sh; do bash -n "$script" || exit; done
       - name: Select explicitly configured device targets
         env:
           TARGETS: ${{ vars.HFGJ_TARGETS }}
@@ -141,14 +144,15 @@ jobs:
           path: public/
           include-hidden-files: true
       - name: Prepare Pages artifact when publication is explicitly enabled
-        if: vars.HFGJ_FEED_ENABLED == 'true' && (inputs.publish || github.event_name == 'schedule')
+        if: vars.HFGJ_FEED_ENABLED == 'true' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name != 'workflow_dispatch' && vars.HFGJ_AUTO_FEED == 'true'))
         uses: actions/upload-pages-artifact@v4
         with:
           path: public
   deploy:
-    needs: assemble
-    if: vars.HFGJ_FEED_ENABLED == 'true' && (inputs.publish || github.event_name == 'schedule')
+    needs: [prepare, assemble]
+    if: vars.HFGJ_FEED_ENABLED == 'true' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name != 'workflow_dispatch' && vars.HFGJ_AUTO_FEED == 'true'))
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -156,6 +160,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+      - name: Refuse publication from an outdated packaging source
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: bash hfgj/scripts/check-feed-source.sh "$SOURCE_SHA"
       - name: Deploy validated signed feed
         id: deployment
         uses: actions/deploy-pages@v4
