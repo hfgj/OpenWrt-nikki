@@ -4,9 +4,29 @@
 set -eu
 umask 077
 rb_action=${1:-}
-[ $# = 4 ] || { echo 'Usage: rollback-package.sh --build|--verify ORIGINAL.ipk RECOVERY.ipk WORK_DIR' >&2; exit 1; }
-case "$rb_action" in --build|--verify) ;; *) exit 1 ;; esac
-for rb_command in tar gzip awk sha256sum stat find mktemp; do command -v "$rb_command" >/dev/null || exit 1; done
+rb_check_stat() {
+    command -v stat >/dev/null &&
+        rb_probe=$(stat -c '%a:%u:%g:%Y' "$0" 2>/dev/null) &&
+        printf '%s\n' "$rb_probe" | awk -F: 'NF!=4 {exit 1} {for(i=1;i<=NF;i++) if($i!~/^[0-9]+$/) exit 1} END {if(NR!=1) exit 1}' &&
+        rb_short=$(stat -c '%a:%u:%g' "$0" 2>/dev/null) &&
+        [ "$rb_short" = "${rb_probe%:*}" ] || {
+        echo 'Missing or incompatible stat; needs -c %a:%u:%g:%Y and -c %a:%u:%g. Run sh install.sh --prepare-tools before migration; service untouched.' >&2
+        return 1
+    }
+}
+rb_check_tools() {
+    for rb_command in tar gzip awk sha256sum find mktemp cat cut sed sort uniq wc cp dirname basename chmod grep rm mkdir; do
+        command -v "$rb_command" >/dev/null || { echo "Missing recovery tool: $rb_command; service untouched" >&2; return 1; }
+    done
+    rb_check_stat
+}
+case "$rb_action" in
+    --check-stat) [ $# = 1 ] || exit 1; rb_check_stat; exit ;;
+    --check-tools) [ $# = 1 ] || exit 1; rb_check_tools; exit ;;
+    --build|--verify) [ $# = 4 ] || exit 1 ;;
+    *) echo 'Usage: rollback-package.sh --check-tools | --check-stat | --build|--verify ORIGINAL.ipk RECOVERY.ipk WORK_DIR' >&2; exit 1 ;;
+esac
+rb_check_tools
 rb_original=$2
 rb_recovery=$3
 rb_workspace=$4
@@ -100,8 +120,12 @@ else
     while IFS= read -r rb_file; do
         [ "$rb_file" = control ] && continue
         [ "$(rb_sha "$rb_stage/original/control/$rb_file")" = "$(rb_sha "$rb_stage/derived/control/$rb_file")" ]
-        [ "$(stat -c '%a:%u:%g:%Y' "$rb_stage/original/control/$rb_file")" = "$(stat -c '%a:%u:%g:%Y' "$rb_stage/derived/control/$rb_file")" ]
+        rb_original_stat=$(stat -c '%a:%u:%g:%Y' "$rb_stage/original/control/$rb_file")
+        rb_derived_stat=$(stat -c '%a:%u:%g:%Y' "$rb_stage/derived/control/$rb_file")
+        [ "$rb_original_stat" = "$rb_derived_stat" ]
     done < "$rb_stage/original/control-list"
-    [ "$(stat -c '%a:%u:%g' "$rb_control")" = "$(stat -c '%a:%u:%g' "$rb_stage/derived/control/control")" ]
+    rb_original_stat=$(stat -c '%a:%u:%g' "$rb_control")
+    rb_derived_stat=$(stat -c '%a:%u:%g' "$rb_stage/derived/control/control")
+    [ "$rb_original_stat" = "$rb_derived_stat" ]
 fi
 printf 'Recovery package %s verified for %s %s\n' "$rb_action" "$rb_name" "$rb_version"

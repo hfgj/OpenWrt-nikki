@@ -44,7 +44,7 @@ case "$hfgj_action" in
         trap 'cancel_job 143' TERM
         cd "$hfgj_job"
         printf 'state=running\npid=%s\n' "$$" > status
-        sha256sum -c bootstrap.sha256
+        sh install.sh --check-bootstrap
         run_phase feed.sh
         run_phase migrate.sh --apply
         exit ;;
@@ -56,7 +56,7 @@ command -v nohup >/dev/null
 command -v setsid >/dev/null
 # The operator must verify this manifest against the reviewed source before launch.
 cd "$hfgj_script_dir"
-sha256sum -c bootstrap.sha256
+sh install.sh --check-bootstrap
 sh migrate.sh --plan
 HFGJ_BACKUP_DIR=${HFGJ_BACKUP_DIR:-/root/hfgj-core-backups}
 HFGJ_JOB_DIR=${HFGJ_JOB_DIR:-$HFGJ_BACKUP_DIR/jobs}

@@ -27,6 +27,7 @@ CORE_RE = re.compile(r"v(\d+\.\d+\.\d+)-hfgj\.([0-9a-f]{12})\Z")
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_BINARY = 128 * 1024 * 1024
+BOOTSTRAP_FILES = ("feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh")
 
 
 def digest(data):
@@ -167,6 +168,7 @@ def inspect_ipk(path, metadata, arch):
     for key in ("Conflicts", "Replaces"):
         if set(re.split(r"[, ]+", fields.get(key, ""))) != {"mihomo-meta", "mihomo-alpha", "mihomo-hfgj-rollback"}:
             raise ValueError(f"Wrong IPK {key}")
+    check_dependencies(fields)
     if not fields.get("Installed-Size", "").isdigit() or int(fields["Installed-Size"]) <= 0:
         raise ValueError("Invalid IPK Installed-Size")
     with tarfile.open(fileobj=io.BytesIO(members["data.tar.gz"]), mode="r:gz") as archive:
@@ -185,44 +187,76 @@ def inspect_ipk(path, metadata, arch):
 
 def prepare(args):
     targets = validate_targets(json.loads(args.targets.read_text()))
+    revision = packaging_release(args.root)
     base = f"https://github.com/{REPOSITORY}/releases/download/{CHANNEL}"
     release = json.loads(get_bytes(f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{CHANNEL}", 1024 * 1024))
     version = get_bytes(base + "/version.txt", 128).decode().strip()
     metadata = resolve(release, version, get_bytes(base + "/SHA256SUMS", 64 * 1024).decode())
-    stamp = subprocess.check_output(["git", "log", "-1", "--format=%ct", "--", "mihomo-hfgj/Makefile", "hfgj/scripts/core_feed.py"], cwd=args.root, text=True).strip()
-    metadata["package_release"] = int(stamp or "1")
+    metadata["package_release"] = revision
     archive = get_bytes(metadata["base_url"] + "/" + metadata["asset"])
     check_archive(archive, metadata)
-    write_recipe(args.root, metadata)
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / metadata["asset"]).write_bytes(archive)
-    (args.output / "core.json").write_text(json.dumps(metadata, indent=2) + "\n")
     changed = True
     if args.feed_url:
         try:
             previous = json.loads(get_bytes(args.feed_url.rstrip("/") + "/feed-state.json", 1024 * 1024))
-            if package_order(previous["core"]) > package_order(metadata):
-                raise ValueError("Refusing an automatic feed downgrade")
-            fingerprint = packaging_fingerprint(args.root)
-            changed = previous != {"core": metadata, "targets": targets, "packaging_sha256": fingerprint}
+            changed = feed_changed(previous, metadata, targets, packaging_fingerprint(args.root))
         except urllib.error.HTTPError as error:
             if error.code != 404:
                 raise
+    # Refused versions/dirty source never leave generated build inputs behind.
+    write_recipe(args.root, metadata)
+    args.output.mkdir(parents=True, exist_ok=True)
+    (args.output / metadata["asset"]).write_bytes(archive)
+    (args.output / "core.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(json.dumps({"core_version": version, "targets": targets, "changed": changed}))
     if args.github_output:
         with args.github_output.open("a") as stream:
             stream.write(f"changed={str(changed).lower()}\nmatrix={json.dumps(targets, separators=(',', ':'))}\n")
 
 
+def packaging_inputs(root):
+    paths = [root / "mihomo-hfgj/Makefile", root / "hfgj/targets.json", root / ".github/workflows/hfgj-feed.yml"]
+    paths += [root / name for name in BOOTSTRAP_FILES]
+    paths += sorted(path for path in (root / "hfgj/scripts").glob("*") if path.is_file())
+    return paths
+
+
+def packaging_release(root):
+    paths = [str(path.relative_to(root)) for path in packaging_inputs(root)]
+    # Include committed deletions as well as files currently present on disk.
+    paths.append("hfgj/scripts")
+    dirty = subprocess.check_output(["git", "status", "--porcelain", "--", *paths], cwd=root, text=True)
+    if dirty:
+        raise ValueError("Distribution inputs are uncommitted; commit reviewed source before preparing packages")
+    stamps = subprocess.check_output(["git", "log", "--format=%ct", "--", *paths], cwd=root, text=True).splitlines()
+    if not stamps:
+        raise ValueError("Distribution inputs have no committed revision")
+    return max(map(int, stamps))
+
+
 def packaging_fingerprint(root):
     result = hashlib.sha256()
-    paths = [root / "mihomo-hfgj/Makefile", root / "hfgj/targets.json", root / ".github/workflows/hfgj-feed.yml"]
-    paths += [root / name for name in ("feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh")]
-    paths += sorted((root / "hfgj/scripts").glob("*"))
-    for path in paths:
-        if path.is_file():
-            result.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes() + b"\0")
+    for path in packaging_inputs(root):
+        result.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes() + b"\0")
     return result.hexdigest()
+
+
+def feed_changed(previous, metadata, targets, fingerprint):
+    order = package_order(metadata)
+    previous_order = package_order(previous["core"])
+    if order < previous_order:
+        raise ValueError("Refusing an automatic feed downgrade")
+    state = {"core": metadata, "targets": targets, "packaging_sha256": fingerprint}
+    changed = previous != state
+    if changed and order == previous_order:
+        raise ValueError("Changed distribution inputs require a higher package version")
+    return changed
+
+
+def check_dependencies(fields):
+    dependencies = {entry.strip().split(" ", 1)[0] for entry in fields.get("Depends", "").split(",")}
+    if "coreutils-stat" not in dependencies:
+        raise ValueError("Missing coreutils-stat dependency")
 
 
 def full_version(metadata):
@@ -259,6 +293,9 @@ def inspect_index(text, ipks, metadata, arch):
         expected = {'Version': full_version(metadata), 'Architecture': arch,
                     'Filename': path.name, 'SHA256sum': digest(path.read_bytes()),
                     'Size': str(path.stat().st_size), 'Provides': 'mihomo'}
+        check_dependencies(packages[name])
+        if packages[name].get('Depends') != inspect_ipk(path, metadata, arch).get('Depends'):
+            raise ValueError('Signed index dependencies differ from verified package')
         for key in ('Conflicts', 'Replaces'):
             if set(re.split(r'[, ]+', packages[name].get(key, ''))) != {'mihomo-meta', 'mihomo-alpha', 'mihomo-hfgj-rollback'}:
                 raise ValueError('Wrong signed index replacement fields')
@@ -280,6 +317,51 @@ def assemble(args):
     args.output = output
 
 
+def check_published_package(args, target, fields, path):
+    feed_url = getattr(args, "feed_url", "")
+    if not feed_url:
+        return
+    base = feed_url.rstrip("/") + f'/{target["branch"]}/{target["arch"]}/hfgj'
+    try:
+        index = get_bytes(base + "/Packages", 1024 * 1024)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return
+        raise
+    signature = get_bytes(base + "/Packages.sig", 64 * 1024)
+    with tempfile.TemporaryDirectory(prefix="hfgj-previous-index-") as temporary:
+        previous = Path(temporary) / "Packages"
+        previous.write_bytes(index)
+        signed = previous.with_suffix(".sig")
+        signed.write_bytes(signature)
+        subprocess.run([args.usign, "-V", "-m", str(previous), "-p", str(args.public_key), "-x", str(signed)], check=True)
+    records = []
+    for paragraph in re.split(r"\n\s*\n", index.decode().strip()):
+        record = {}
+        for line in paragraph.splitlines():
+            if line.startswith((" ", "\t")):
+                continue
+            key, value = line.split(":", 1)
+            if key in record:
+                raise ValueError("Duplicate published index field")
+            record[key] = value.strip()
+        if record.get("Package") == "mihomo-hfgj":
+            records.append(record)
+    if len(records) != 1:
+        raise ValueError("Ambiguous published core package")
+    old = records[0]
+    match = re.fullmatch(r"(.+)-r([0-9]+)", old.get("Version", ""))
+    if not match or not SHA_RE.fullmatch(old.get("SHA256sum", "")):
+        raise ValueError("Invalid published package identity")
+    old_order = package_order({"package_version": match[1], "package_release": int(match[2])})
+    current = re.fullmatch(r"(.+)-r([0-9]+)", fields["Version"])
+    current_order = package_order({"package_version": current[1], "package_release": int(current[2])})
+    if current_order < old_order:
+        raise ValueError("Refusing a package downgrade during assembly")
+    if current_order == old_order and digest(path.read_bytes()) != old["SHA256sum"]:
+        raise ValueError("Same package version has different IPK bytes; increase the revision")
+
+
 def _assemble(args):
     metadata = json.loads(args.metadata.read_text())
     targets = validate_targets(json.loads(args.targets.read_text()))
@@ -292,7 +374,8 @@ def _assemble(args):
         core_ipks = [path for path in ipks if path.name.startswith("mihomo-hfgj_")]
         if len(ipks) != 1 or len(core_ipks) != 1:
             raise ValueError("Feed must contain the core IPK only; legacy bridge is retired")
-        inspect_ipk(core_ipks[0], metadata, arch)
+        fields = inspect_ipk(core_ipks[0], metadata, arch)
+        check_published_package(args, target, fields, core_ipks[0])
         subprocess.run([args.usign, "-V", "-m", str(source / "Packages"), "-p", str(args.public_key), "-x", str(source / "Packages.sig")], check=True)
         index = (source / "Packages").read_text()
         packages = inspect_index(index, ipks, metadata, arch)
@@ -306,9 +389,9 @@ def _assemble(args):
         if gzip.decompress((destination / "Packages.gz").read_bytes()) != (destination / "Packages").read_bytes():
             raise ValueError("Compressed index differs")
     shutil.copy2(args.public_key, args.output / "key-build.pub")
-    for name in ("feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh"):
+    for name in BOOTSTRAP_FILES:
         shutil.copy2(args.root / name, args.output / name)
-    (args.output / "bootstrap.sha256").write_text("".join(digest((args.output / name).read_bytes()) + "  " + name + "\n" for name in ("feed.sh", "install.sh", "migrate.sh", "migrate-job.sh", "rollback-package.sh")))
+    (args.output / "bootstrap.sha256").write_text("".join(digest((args.output / name).read_bytes()) + "  " + name + "\n" for name in BOOTSTRAP_FILES))
     state = {"core": metadata, "targets": targets, "packaging_sha256": packaging_fingerprint(args.root)}
     (args.output / "feed-state.json").write_text(json.dumps(state, indent=2) + "\n")
     (args.output / ".nojekyll").touch()
@@ -333,6 +416,7 @@ def main():
     p.add_argument("--output", type=Path, default=Path("public"))
     p.add_argument("--public-key", type=Path, required=True)
     p.add_argument("--usign", default="usign")
+    p.add_argument("--feed-url", default="")
     p.set_defaults(function=assemble)
     args = parser.parse_args()
     args.function(args)

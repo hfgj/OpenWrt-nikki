@@ -65,6 +65,15 @@ class RecoveryPackageTests(unittest.TestCase):
                 self.recovery.write_bytes(tar_bytes([(k,v,0o644) for k,v in members.items()]))
                 self.assertNotEqual(self.run_helper('--verify').returncode,0)
 
+    def test_stat_failure_on_control_files_cannot_compare_two_empty_values(self):
+        self.assertEqual(self.run_helper('--build').returncode,0)
+        stat = shutil.which('gstat') or shutil.which('stat')
+        wrapper = self.root/'tools/stat'
+        wrapper.unlink(missing_ok=True)
+        wrapper.write_text('#!/bin/sh\nfor path; do :; done\ncase "$path" in */rollback-package.sh) exec '+stat+' "$@" ;; *) exit 1 ;; esac\n')
+        wrapper.chmod(0o755)
+        self.assertNotEqual(self.run_helper('--verify').returncode,0)
+
     def test_unsupported_or_ambiguous_archive_rejected(self):
         for control in (self.control+b'Version: 1.19.32\n',self.control.replace(b'1.19.31-r1',b'1.19.31~hfgjrestore'),self.control.replace(b'Conflicts: mihomo-alpha',b'Conflicts: mihomo-alpha\n continuation'),self.control.replace(b'mihomo-meta',b'other-package',1)):
             with self.subTest(control=control):

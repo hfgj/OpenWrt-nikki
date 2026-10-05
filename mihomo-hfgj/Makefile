@@ -20,7 +20,7 @@ define Package/mihomo-hfgj
   CATEGORY:=Network
   TITLE:=HFGJ Mihomo stable core
   URL:=https://github.com/hfgj/mihomo
-  DEPENDS:=@aarch64 +ca-bundle +ip-full +kmod-inet-diag +kmod-tun
+  DEPENDS:=@aarch64 +ca-bundle +coreutils-stat +ip-full +kmod-inet-diag +kmod-tun
   PROVIDES:=mihomo
   CONFLICTS:=mihomo-meta mihomo-alpha mihomo-hfgj-rollback
   ALTERNATIVES:=300:/usr/bin/mihomo:/usr/libexec/mihomo

@@ -44,18 +44,20 @@ jobs:
       - name: Local regression and shell checks
         run: |
           python3 -m unittest discover -s hfgj/tests -v
-          sh -n feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh
+          for script in feed.sh install.sh migrate.sh migrate-job.sh rollback-package.sh; do sh -n "$script" || exit; done
       - name: Select explicitly configured device targets
         env:
           TARGETS: ${{ vars.HFGJ_TARGETS }}
         run: |
-          if [ -n "$TARGETS" ]; then printf '%s\n' "$TARGETS" > hfgj/targets.json; fi
+          mkdir -p hfgj/build
+          cp hfgj/targets.json hfgj/build/targets.json
+          if [ -n "$TARGETS" ]; then printf '%s\n' "$TARGETS" > hfgj/build/targets.json; fi
       - name: Resolve and verify published HFGJ Linux ARM64 core
         id: core
         env:
           FEED_URL: ${{ vars.HFGJ_FEED_URL || 'https://hfgj.github.io/OpenWrt-nikki' }}
         run: |
-          python3 hfgj/scripts/core_feed.py prepare --feed-url "$FEED_URL" --github-output "$GITHUB_OUTPUT"
+          python3 hfgj/scripts/core_feed.py prepare --targets hfgj/build/targets.json --feed-url "$FEED_URL" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: hfgj-locked-core
@@ -63,7 +65,6 @@ jobs:
             hfgj/build/
             mihomo-hfgj/core.mk
             mihomo-hfgj/core.json
-            hfgj/targets.json
           include-hidden-files: true
   build:
     needs: prepare
@@ -129,10 +130,11 @@ jobs:
       - name: Assemble only after every target succeeded
         env:
           KEY_BUILD_PUB: ${{ secrets.HFGJ_KEY_BUILD_PUB }}
+          FEED_URL: ${{ vars.HFGJ_FEED_URL || 'https://hfgj.github.io/OpenWrt-nikki' }}
         run: |
           umask 077
           printf '%s\n' "$KEY_BUILD_PUB" > /tmp/hfgj-public.key
-          python3 hfgj/scripts/core_feed.py assemble --input staged --public-key /tmp/hfgj-public.key
+          python3 hfgj/scripts/core_feed.py assemble --feed-url "$FEED_URL" --targets hfgj/build/targets.json --input staged --public-key /tmp/hfgj-public.key
       - uses: actions/upload-artifact@v7
         with:
           name: hfgj-feed-preview

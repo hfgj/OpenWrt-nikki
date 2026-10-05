@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("core_feed", ROOT / "hfgj/scripts/core_feed.py")
@@ -55,10 +56,11 @@ def fixture():
     return bytes(binary), archive, release, metadata
 
 
-def ipk(path, metadata, binary, *, bridge=False, extra=None, wrong_arch=False):
+def ipk(path, metadata, binary, *, bridge=False, extra=None, wrong_arch=False, depends="coreutils-stat"):
     name = "mihomo-hfgj-rollback" if bridge else "mihomo-hfgj"
     control = f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {'x86_64' if wrong_arch else ARCH}\nProvides: mihomo\nInstalled-Size: {max(32, len(binary)+len(json.dumps(metadata)))}\n"
     if not bridge:
+        control += f"Depends: {depends}\n"
         control += "Conflicts: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nReplaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nAlternatives: 300:/usr/bin/mihomo:/usr/libexec/mihomo\n"
     payload = [("usr/share/mihomo-hfgj-rollback/README", b"temporary bridge\n", 0o644)] if bridge else [
         ("usr/libexec/mihomo", binary, 0o755), ("usr/share/mihomo-hfgj/core.json", json.dumps(metadata).encode(), 0o644)]
@@ -111,7 +113,7 @@ class CoreFeedTests(unittest.TestCase):
             path = Path(temporary) / "core.ipk"
             ipk(path, metadata, binary)
             feed.inspect_ipk(path, metadata, ARCH)
-            for change in ({"wrong_arch": True}, {"extra": ("etc/nikki/run/config.yaml", b"private", 0o644)}):
+            for change in ({"depends": ""}, {"wrong_arch": True}, {"extra": ("etc/nikki/run/config.yaml", b"private", 0o644)}):
                 ipk(path, metadata, binary, **change)
                 with self.assertRaises(ValueError):
                     feed.inspect_ipk(path, metadata, ARCH)
@@ -141,9 +143,9 @@ class CoreFeedTests(unittest.TestCase):
             stage.mkdir(parents=True)
             core = stage / "mihomo-hfgj_test.ipk"
             ipk(core, metadata, binary)
-            text = "".join(f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {ARCH}\nProvides: mihomo\nConflicts: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nReplaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nFilename: {path.name}\nSize: {path.stat().st_size}\nSHA256sum: {feed.digest(path.read_bytes())}\n\n" for name, path in (("mihomo-hfgj", core),))
+            text = "".join(f"Package: {name}\nVersion: {feed.full_version(metadata)}\nArchitecture: {ARCH}\nProvides: mihomo\nDepends: coreutils-stat\nConflicts: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nReplaces: mihomo-meta, mihomo-alpha, mihomo-hfgj-rollback\nFilename: {path.name}\nSize: {path.stat().st_size}\nSHA256sum: {feed.digest(path.read_bytes())}\n\n" for name, path in (("mihomo-hfgj", core),))
             feed.inspect_index(text, [core], metadata, ARCH)
-            for changed in (text.replace(ARCH, 'x86_64'), text.replace('Filename: '+core.name, 'Filename: ../wrong.ipk'), text+text, text.replace('Replaces:', 'Ignored:'), text.replace('mihomo-alpha, mihomo-hfgj-rollback', 'mihomo-alpha')):
+            for changed in (text.replace(ARCH, 'x86_64'), text.replace('Filename: '+core.name, 'Filename: ../wrong.ipk'), text+text, text.replace('Depends: coreutils-stat', 'Depends: ca-bundle'), text.replace('Replaces:', 'Ignored:'), text.replace('mihomo-alpha, mihomo-hfgj-rollback', 'mihomo-alpha')):
                 with self.assertRaises(ValueError):
                     feed.inspect_index(changed, [core], metadata, ARCH)
             (stage / "Packages").write_text(text)
@@ -161,12 +163,45 @@ class CoreFeedTests(unittest.TestCase):
             for entry in entries:
                 digest,name=entry.split('  ',1)
                 self.assertEqual(digest,feed.digest((root/'public'/name).read_bytes()))
+                self.assertEqual((root/'public'/name).read_bytes(), (ROOT/name).read_bytes())
             self.assertFalse(any(path.suffix == ".sec" for path in (root / "public").rglob("*")))
             (stage / "Packages").write_text(text + "tampered\n")
             args.output = root / "bad-output"
             with self.assertRaises(subprocess.CalledProcessError):
                 feed.assemble(args)
             self.assertFalse(args.output.exists())
+
+    def test_same_version_ipk_bytes_checked_against_signed_published_index(self):
+        usign = os.environ.get('HFGJ_TEST_USIGN') or shutil.which('usign')
+        if not usign:
+            if os.environ.get('GITHUB_ACTIONS') == 'true': self.fail('CI must provide native usign')
+            self.skipTest('Set HFGJ_TEST_USIGN to native usign')
+        binary, _, _, metadata = fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            private, public = root/'test.sec', root/'test.pub'
+            subprocess.run([usign,'-G','-s',str(private),'-p',str(public)],check=True,capture_output=True)
+            core = root/'core.ipk'
+            ipk(core, metadata, binary)
+            fields = feed.inspect_ipk(core, metadata, ARCH)
+            index = root/'Packages'
+            index.write_text(f'Package: mihomo-hfgj\nVersion: {fields["Version"]}\nSHA256sum: {feed.digest(core.read_bytes())}\n\n')
+            subprocess.run([usign,'-S','-m',str(index),'-s',str(private)],check=True,capture_output=True)
+            responses = [index.read_bytes(), (root/'Packages.sig').read_bytes()]
+            args = SimpleNamespace(feed_url='https://fixture.invalid', usign=usign, public_key=public)
+            target = {'branch': 'openwrt-24.10', 'arch': ARCH}
+            with patch.object(feed,'get_bytes',side_effect=responses):
+                feed.check_published_package(args,target,fields,core)
+            core.write_bytes(core.read_bytes()+b'different SDK output')
+            with patch.object(feed,'get_bytes',side_effect=responses):
+                with self.assertRaisesRegex(ValueError,'different IPK bytes'):
+                    feed.check_published_package(args,target,fields,core)
+            newer = dict(fields, Version=feed.full_version(dict(metadata, package_release=2)))
+            with patch.object(feed,'get_bytes',side_effect=responses):
+                feed.check_published_package(args,target,newer,core)
+            with patch.object(feed,'get_bytes',side_effect=[responses[0]+b'tampered', responses[1]]):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    feed.check_published_package(args,target,newer,core)
 
 
 if __name__ == "__main__":

@@ -111,44 +111,60 @@ check_core_peak() {
 record_package() {
     hfgj_pkg=$1
     hfgj_expected_version=$2
-    opkg_work download "$hfgj_pkg"
-    hfgj_downloaded=
-    for hfgj_ipk in ./*.ipk; do
-        [ -f "$hfgj_ipk" ] || continue
-        if [ "$(ipk_field "$hfgj_ipk" Package)" = "$hfgj_pkg" ] && [ "$(ipk_field "$hfgj_ipk" Version)" = "$hfgj_expected_version" ]; then
-            [ -z "$hfgj_downloaded" ] || { echo 'Ambiguous package download' >&2; return 1; }
-            hfgj_downloaded=$hfgj_ipk
-        fi
-    done
-    [ -n "$hfgj_downloaded" ] || { echo "Exact rollback/candidate package unavailable: $hfgj_pkg $hfgj_expected_version; service has not been stopped" >&2; return 1; }
-    hfgj_trusted=0
-    hfgj_actual_sha=$(sha "$hfgj_downloaded")
     for hfgj_list in /var/opkg-lists/*; do
         [ -f "$hfgj_list.sig" ] || continue
         hfgj_checked_index=$(trusted_index "$hfgj_list") || continue
-        hfgj_signed_sha=$(awk -v name="$hfgj_pkg" -v version="$hfgj_expected_version" '
+        if hfgj_signed_record=$(awk -v name="$hfgj_pkg" -v version="$hfgj_expected_version" '
             BEGIN {RS=""; FS="\n"}
-            {p=""; v=""; s=""; for(i=1;i<=NF;i++) {
+            {p=""; v=""; f=""; s=""; for(i=1;i<=NF;i++) {
                 if($i~/^Package: /) p=substr($i,10)
                 if($i~/^Version: /) v=substr($i,10)
+                if($i~/^Filename: /) f=substr($i,11)
                 if($i~/^SHA256sum: /) s=substr($i,12)
-            } if(p==name && v==version) print s}' "$hfgj_checked_index")
-        rm -f "$hfgj_checked_index"
-        [ "$hfgj_signed_sha" = "$hfgj_actual_sha" ] || continue
-        hfgj_trusted=1
-        break
+            } if(p==name && v==version) {count++; filename=f; sum=s}}
+            END {if(count>1) exit 1; if(count==1) print filename "\n" sum}
+        ' "$hfgj_checked_index"); then
+            rm -f "$hfgj_checked_index"
+        else
+            rm -f "$hfgj_checked_index"
+            echo 'Ambiguous exact package in signed index' >&2
+            return 1
+        fi
+        [ -n "$hfgj_signed_record" ] || continue
+        hfgj_filename=$(printf '%s\n' "$hfgj_signed_record" | sed -n '1p')
+        hfgj_signed_sha=$(printf '%s\n' "$hfgj_signed_record" | sed -n '2p')
+        case "$hfgj_filename" in ''|.*|*[!a-zA-Z0-9_.+-]*) echo 'Unsupported signed filename' >&2; return 1 ;; esac
+        case "$hfgj_filename" in *.ipk) ;; *) return 1 ;; esac
+        case "$hfgj_signed_sha" in *[!0-9a-f]*) return 1 ;; esac
+        [ "${#hfgj_signed_sha}" = 64 ] || return 1
+        hfgj_feed_name=$(basename "$hfgj_list")
+        hfgj_source_url=$(
+            for hfgj_conf in /etc/opkg.conf /etc/opkg/*.conf; do
+                [ -f "$hfgj_conf" ] || continue
+                awk -v name="$hfgj_feed_name" '$1 ~ /^src(\/gz)?$/ && $2==name {print $3}' "$hfgj_conf"
+            done
+        )
+        # Supported feeds are public HTTPS URLs. No query/credentials/path tricks.
+        case "$hfgj_source_url" in https://*) ;; *) echo 'Exact package feed URL unavailable' >&2; return 1 ;; esac
+        case "$hfgj_source_url" in *[!a-zA-Z0-9:/._-]*) echo 'Unsupported or ambiguous feed URL' >&2; return 1 ;; esac
+        hfgj_downloaded="./$hfgj_pkg.download.ipk"
+        wget -q -O "$hfgj_downloaded" "${hfgj_source_url%/}/$hfgj_filename" || return 1
+        [ "$(sha "$hfgj_downloaded")" = "$hfgj_signed_sha" ] || { echo 'Exact download differs from signed hash' >&2; return 1; }
+        [ "$(ipk_field "$hfgj_downloaded" Package)" = "$hfgj_pkg" ] || return 1
+        [ "$(ipk_field "$hfgj_downloaded" Version)" = "$hfgj_expected_version" ] || return 1
+        mv "$hfgj_downloaded" "./$hfgj_pkg.ipk"
+        return 0
     done
-    [ "$hfgj_trusted" = 1 ] || { echo "Downloaded package does not match a trusted signed index: $hfgj_pkg" >&2; return 1; }
-    # opkg may already use the desired basename. GNU/BusyBox mv can reject
-    # a same-file rename, although macOS mv accepts it.
-    if [ "${hfgj_downloaded#./}" != "$hfgj_pkg.ipk" ]; then
-        mv "$hfgj_downloaded" "$hfgj_pkg.ipk"
-    fi
+    echo "Exact signed package unavailable: $hfgj_pkg $hfgj_expected_version; service untouched" >&2
+    return 1
 }
 validate_hfgj_package() {
     [ "$(ipk_field "$1" Package)" = mihomo-hfgj ]
     [ "$(ipk_field "$1" Architecture)" = "$DISTRIB_ARCH" ]
     [ "$(ipk_field "$1" Provides)" = mihomo ]
+    ipk_field "$1" Depends | tr ',' '\n' | grep -Eq '^[[:space:]]*coreutils-stat([[:space:]]|$)' || {
+        echo 'Candidate lacks coreutils-stat dependency; service untouched' >&2; return 1;
+    }
     [ "$(ipk_field "$1" Alternatives)" = '300:/usr/bin/mihomo:/usr/libexec/mihomo' ]
     for hfgj_replacement_field in Conflicts Replaces; do
         hfgj_replacement=$(ipk_field "$1" "$hfgj_replacement_field" | tr ', ' '\n' | sed '/^$/d' | sort)
@@ -327,6 +343,14 @@ if [ "$hfgj_action" = --rollback ]; then
     rollback "$2"
     exit
 fi
+[ -r "$hfgj_script_dir/rollback-package.sh" ] || { echo 'Recovery helper missing; nothing changed' >&2; exit 1; }
+sh "$hfgj_script_dir/rollback-package.sh" --check-tools
+for hfgj_command in usign wget jsonfilter readlink df du id uname mv; do
+    command -v "$hfgj_command" >/dev/null || { echo "Missing migration tool: $hfgj_command; nothing changed" >&2; exit 1; }
+done
+installed coreutils-stat || {
+    echo 'Missing registered coreutils-stat dependency; run sh install.sh --prepare-tools before migration; nothing changed' >&2; exit 1;
+}
 hfgj_old_package=
 for hfgj_pkg in mihomo-hfgj mihomo-meta mihomo-alpha; do
     if installed "$hfgj_pkg"; then

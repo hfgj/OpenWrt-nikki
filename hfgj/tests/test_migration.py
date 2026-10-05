@@ -29,8 +29,20 @@ database = root/'packages.json'
 state = json.loads(database.read_text())
 with (root/'events').open('a') as stream: stream.write('opkg ' + ' '.join(args) + '\n')
 command = args[0]
+if command == 'list-installed':
+    print('luci-i18n-base-zh-cn - 1')
+    sys.exit(0)
+if command == 'install' and args[1:] == ['coreutils-stat']:
+    if os.environ.get('FAIL_STAT_INSTALL'): sys.exit(17)
+    (root/'stat-ready').touch()
+    sys.exit(0)
+if command == 'install' and args[1:] in (['nikki','luci-app-nikki'], ['luci-i18n-nikki-zh-cn']):
+    sys.exit(0)
 if command == 'status':
     name = args[1]
+    if name == 'coreutils-stat':
+        if (root/'stat-ready').exists(): print('Package: coreutils-stat\nVersion: 1\nStatus: install ok installed')
+        sys.exit(0)
     if name in state:
         print('Package: '+name+'\nVersion: '+state[name]+'\nArchitecture: aarch64_generic\nStatus: install ok installed\nProvides: mihomo')
     sys.exit(0)
@@ -38,10 +50,7 @@ if command == 'compare-versions':
     old,new=args[1],args[3]
     sys.exit(0 if old==new+'~hfgjrestore' and args[2]=='<' else 1)
 if command == 'download':
-    path = root/'repository'/(args[1]+'.ipk')
-    if not path.exists(): sys.exit(1)
-    shutil.copy(path, Path.cwd()/path.name)
-    sys.exit(0)
+    sys.exit('Name-based package download must not be used')
 if command == 'remove':
     name = args[1]
     if name in ('mihomo-hfgj','mihomo-meta','mihomo-alpha','mihomo-hfgj-rollback'): sys.exit('Virtual mihomo dependency still has installed dependers')
@@ -111,6 +120,7 @@ class MigrationTests(unittest.TestCase):
         (self.root/'usr/libexec/mihomo').chmod(0o755)
         (self.root/'usr/bin/mihomo').symlink_to(self.root/'usr/libexec/mihomo')
         (self.root/'packages.json').write_text(json.dumps({'mihomo-meta': '1.19.31'}))
+        (self.root/'stat-ready').touch()
         metadata = {'core_version': VERSION, 'binary_sha256': hashlib.sha256(self.new).hexdigest(), 'package_version': '1.19.31+hfgj.20261004000000'}
         ipk(self.root/'repository/mihomo-hfgj.ipk', metadata, self.new)
         ipk(self.root/'repository/mihomo-hfgj-rollback.ipk', metadata, self.new, bridge=True)
@@ -127,14 +137,25 @@ class MigrationTests(unittest.TestCase):
         index = ''
         for package in ('mihomo-hfgj',):
             value = (self.root/'repository'/(package+'.ipk')).read_bytes()
-            index += f'Package: {package}\nVersion: 1.19.31+hfgj.20261004000000-r1\nSHA256sum: {hashlib.sha256(value).hexdigest()}\n\n'
+            index += f'Package: {package}\nVersion: 1.19.31+hfgj.20261004000000-r1\nSHA256sum: {hashlib.sha256(value).hexdigest()}\nFilename: {package}.ipk\n\n'
         (self.root/'var/opkg-lists/hfgj-core').write_text(index)
         (self.root/'var/opkg-lists/hfgj-core.sig').write_text('signature fixture')
-        (self.root/'var/opkg-lists/nikki').write_text('Package: mihomo-meta\nVersion: 1.19.31\nSHA256sum: '+hashlib.sha256(previous.read_bytes()).hexdigest()+'\n\n')
+        (self.root/'var/opkg-lists/nikki').write_text('Package: mihomo-meta\nVersion: 1.19.31\nSHA256sum: '+hashlib.sha256(previous.read_bytes()).hexdigest()+'\nFilename: mihomo-meta.ipk\n\n')
         (self.root/'var/opkg-lists/nikki.sig').write_text('signature fixture')
         (self.root/'rollback-package.sh').write_text((ROOT/'rollback-package.sh').read_text())
         if shutil.which('gstat'): self.command('stat', '#!/bin/sh\nexec gstat \"$@\"\n')
         self.command('opkg', MOCK)
+        (self.root/'etc/opkg.conf').write_text('option check_signature\nsrc/gz hfgj-core https://fixture.invalid/hfgj\nsrc/gz nikki https://fixture.invalid/nikki\n')
+        self.command('wget', r'''#!/usr/bin/env python3
+import os,shutil,sys
+from pathlib import Path
+root=Path(os.environ['ROUTER_FIXTURE']);args=sys.argv[1:]
+if args[:2]!=['-q','-O'] or len(args)!=4:sys.exit('Unsupported exact download')
+with (root/'events').open('a') as f:f.write('wget '+args[-1]+'\n')
+source=root/'repository'/args[-1].rsplit('/',1)[-1]
+if not source.is_file():sys.exit(1)
+shutil.copy(source,args[2])
+''')
         self.command('id', '#!/bin/sh\necho 0\n')
         self.command('uname', '#!/bin/sh\necho aarch64\n')
         self.command('usign', '#!/bin/sh\nexit 0\n')
@@ -439,8 +460,13 @@ case "$path" in */usr/libexec/mihomo) echo "56592 $path";; *) echo "24477 $path"
         self.assertEqual(set(json.loads((self.root/'packages.json').read_text())),{'mihomo-hfgj'})
         self.assertTrue((self.root/'running').exists())
 
+    def write_install_script(self):
+        script = (ROOT/'install.sh').read_text()
+        script = re.sub(r'/(?:etc|usr|var|root|overlay|proc)(?=/|[ )\n])', lambda match: str(self.root)+match[0], script)
+        (self.root/'install.sh').write_text(script)
+
     def setup_job(self, *, fail=False):
-        for name in ('install.sh',): (self.root/name).write_text('#!/bin/sh\nexit 0\n')
+        self.write_install_script()
         (self.root/'feed.sh').write_text('#!/bin/sh\nsleep 1\n'+('exit 7\n' if fail else 'exit 0\n'))
         (self.root/'migrate-job.sh').write_text((ROOT/'migrate-job.sh').read_text())
         self.root.joinpath('bootstrap.sha256').write_text(''.join(

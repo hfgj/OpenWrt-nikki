@@ -115,6 +115,32 @@ class RealOpkgTests(unittest.TestCase):
                 self.assertEqual(final.get(key),expected)
             self.assertEqual(feed.digest(original.read_bytes()),original_hash)
 
+    def test_name_based_download_selects_replacing_package(self):
+        # Reproduce the actual opkg semantics that made downloading rollback
+        # material by the old package NAME fail. No installs or services occur.
+        with tempfile.TemporaryDirectory() as directory:
+            work=Path(directory).resolve();root=work/'root'
+            for folder in ('usr/lib/opkg','tmp','lists'):(root/folder).mkdir(parents=True)
+            status=root/'usr/lib/opkg/status';status.touch()
+            repo=work/'repository';repo.mkdir()
+            downloads=work/'downloads';downloads.mkdir()
+            package(repo/'original.ipk','mihomo-meta','1.19.31',[('usr/libexec/mihomo',b'old',0o755)],'Provides: mihomo\n')
+            replacement='Provides: mihomo\nConflicts: mihomo-meta\nReplaces: mihomo-meta\n'
+            package(repo/'candidate.ipk','mihomo-hfgj','9.0.0',[('usr/libexec/mihomo',b'new',0o755)],replacement)
+            index=''
+            for filename,name,version,extra in [('original.ipk','mihomo-meta','1.19.31',''),('candidate.ipk','mihomo-hfgj','9.0.0',replacement)]:
+                payload=(repo/filename).read_bytes()
+                index+=f'Package: {name}\nVersion: {version}\nArchitecture: all\n{extra}Filename: {filename}\nSize: {len(payload)}\nSHA256sum: {feed.digest(payload)}\n\n'
+            (root/'lists/reference').write_text(index)
+            cfg=work/'opkg.conf'
+            cfg.write_text(f'arch all 1\ndest root /\nlists_dir ext /lists\nsrc reference {repo.as_uri()}\n')
+            result=subprocess.run([self.opkg,'-f',str(cfg),'-o',str(root),'--tmp-dir',str(root/'tmp'),'download','mihomo-meta'],cwd=downloads,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertNotIn('Collected errors:',result.stdout+result.stderr)
+            self.assertEqual([path.name for path in downloads.glob('*.ipk')],['candidate.ipk'])
+            self.assertEqual((downloads/'candidate.ipk').read_bytes(),(repo/'candidate.ipk').read_bytes())
+            self.assertEqual(status.read_text(),'')
+
     def test_official_core_replacement_and_exact_recovery(self):
         for name, versions in [('mihomo-meta',['1.19.31','1.19.31-r1']),('mihomo-alpha',['2026.10.04','2026.10.04-r1'])]:
             for version in versions:
@@ -162,6 +188,9 @@ print(Path(target).resolve())
         package(nikki,'nikki','1',[('usr/share/nikki/marker',b'nikki fixture',0o644)],'Depends: mihomo\n')
         cfg.write_text('arch all 1\n'+cfg.read_text())
         subprocess.run([self.opkg,'-f',str(cfg),'-o',str(router.root),'install',str(nikki)],check=True,capture_output=True)
+        stat_package=router.root/'stat.ipk'
+        package(stat_package,'coreutils-stat','1',[])
+        subprocess.run([self.opkg,'-f',str(cfg),'-o',str(router.root),'install',str(stat_package)],check=True,capture_output=True)
         router.command('opkg', r'''#!/usr/bin/env python3
 import os,shutil,subprocess,sys
 from pathlib import Path
@@ -169,9 +198,7 @@ root=Path(os.environ['ROUTER_FIXTURE']);args=sys.argv[1:]
 with (root/'events').open('a') as f:f.write('real-opkg '+' '.join(args)+'\n')
 command_args=args[2:] if args[:1]==['--tmp-dir'] else args
 if command_args[0]=='download':
-    source=root/'repository'/(command_args[1]+'.ipk')
-    if not source.exists():sys.exit(1)
-    shutil.copy(source,Path.cwd()/source.name);sys.exit(0)
+    sys.exit('Name-based download must not be used by the migration script')
 sys.exit(subprocess.run([os.environ['HFGJ_TEST_OPKG'],'-f',os.environ['HFGJ_REAL_CONFIG'],'-o',str(root),*args]).returncode)
 ''')
         for failure in (False,True):
