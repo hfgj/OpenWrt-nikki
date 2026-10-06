@@ -33,4 +33,4 @@ jobs:
         run: |
           publish=false
           if [ "$AUTO_FEED" = true ]; then publish=true; fi
-          gh workflow run hfgj-feed.yml --ref hfgj -f "publish=$publish"
+          gh workflow run hfgj-feed.yml --repo "$GITHUB_REPOSITORY" --ref hfgj -f "publish=$publish"

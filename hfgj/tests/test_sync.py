@@ -1,11 +1,60 @@
 """Check sync transactions against disposable local repositories, never GitHub."""
 import os
+import json
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class FeedDispatchTests(unittest.TestCase):
+    def dispatch(self, auto_feed, exit_code=0):
+        workflow = (ROOT/'.github/workflows/hfgj-sync.yml').read_text()
+        step = workflow.split('name: Explicitly dispatch the feed workflow after the token-authored push\n', 1)[1]
+        command = textwrap.dedent(step.split('run: |\n', 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
+            for name, repo in [('origin', 'hfgj'), ('upstream', 'nikkinikki-org')]:
+                subprocess.run(['git', '-C', str(root), 'remote', 'add', name,
+                                f'https://github.com/{repo}/OpenWrt-nikki.git'], check=True)
+            binary = root/'bin'
+            binary.mkdir()
+            stub = binary/'gh'
+            stub.write_text('#!/usr/bin/env python3\n' + textwrap.dedent('''\
+                import json, os, subprocess, sys
+                args = sys.argv[1:]
+                if '--repo' in args:
+                    repo = args[args.index('--repo') + 1]
+                else:
+                    repo = subprocess.check_output(['git', 'remote', 'get-url', 'upstream'], text=True).strip()
+                print(json.dumps({'repo': repo, 'args': args}))
+                sys.exit(int(os.environ['STUB_EXIT']) if repo == 'hfgj/OpenWrt-nikki' else 44)
+                '''))
+            stub.chmod(0o755)
+            return subprocess.run(['bash', '-e', '-c', command], cwd=root, capture_output=True, text=True,
+                                  env=dict(os.environ, PATH=str(binary)+os.pathsep+os.environ['PATH'],
+                                           GITHUB_REPOSITORY='hfgj/OpenWrt-nikki', AUTO_FEED=auto_feed,
+                                           STUB_EXIT=str(exit_code)))
+
+    def test_upstream_remote_does_not_redirect_automatic_feed(self):
+        result = self.dispatch('true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        call = json.loads(result.stdout)
+        self.assertEqual(call['repo'], 'hfgj/OpenWrt-nikki')
+        self.assertEqual(call['args'], ['workflow', 'run', 'hfgj-feed.yml', '--repo',
+                                       'hfgj/OpenWrt-nikki', '--ref', 'hfgj', '-f', 'publish=true'])
+
+    def test_disabled_auto_feed_dispatches_preview_to_fork(self):
+        result = self.dispatch('false')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['args'][-1], 'publish=false')
+
+    def test_dispatch_error_remains_a_failure(self):
+        self.assertEqual(self.dispatch('true', exit_code=17).returncode, 17)
 
 
 class SyncTests(unittest.TestCase):
